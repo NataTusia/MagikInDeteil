@@ -143,7 +143,6 @@ async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         await message.answer(
             "👋 <b>Магическая Панель v2.0</b>\n"
-            "Лимиты текста обновлены.\n\n"
             "/generate_tg — Пост для Telegram\n"
             "/generate_inst — Пост для Instagram",
             parse_mode="HTML"
@@ -243,7 +242,7 @@ async def main():
     scheduler.start()
     
     try:
-        await bot.send_message(ADMIN_ID, "🟢 Бот перезапущен с новыми лимитами!")
+        await bot.send_message(ADMIN_ID, "✨ Портал связи с Вселенной успешно открыт. Энергетические потоки стабилизированы. Я готов принимать сигналы.і")
     except:
         pass
 
