@@ -28,12 +28,12 @@ model = genai.GenerativeModel('gemini-flash-latest')
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- ЛОКАЛІЗАЦІЯ І ПРОМПТ ---
-# Щоб змінити мову генерації, зміни це слово на "ukrainian"
+# Мова генерації (зміни на "ukrainian", якщо захочеш)
 TARGET_LANGUAGE = "russian" 
 
 # --- Допоміжні функції ---
 def clean_text(text):
+    # Прибираємо Markdown сміття, яке може псувати HTML
     return text.replace("**", "").replace("### ", "").replace("## ", "")
 
 def connect_to_db_with_retry():
@@ -44,29 +44,29 @@ def connect_to_db_with_retry():
             time.sleep(5)
             if i == 2: raise e
 
-# --- 1. Логіка AI (Езотерика / Таро) ---
+# --- 1. Логіка AI (З ЖОРСТКИМИ ЛІМІТАМИ) ---
 async def generate_ai_post(topic, context, platform):
     if platform == "tg":
         role_desc = "Ты опытный таролог и энергопрактик, автор Telegram-канала."
-        # Вимоги для Телеграму
         requirements = (
-            "Пиши глубоко, но без 'воды'. Стиль: мистический, но прикладной и современный. "
-            "Давай конкретные практики или советы. Используй <b>жирный шрифт</b> для акцентов. "
-            "В конце задай вопрос аудитории для обсуждения."
+            "Стиль: мистический, но без 'воды', конкретный. "
+            "Используй <b>жирный шрифт</b> для важных мыслей. "
+            "В конце задай 1 короткий вопрос аудитории."
         )
     else: # inst
-        role_desc = "Ты Instagram-блогер в нише эзотерики и самопознания."
-        # Вимоги для Інстаграму
+        role_desc = "Ты популярный эзотерик-блогер."
         requirements = (
-            "Стиль: атмосферный, цепляющий, эмоциональный. Структура: Заголовок-хук -> Суть -> Призыв к действию (сохрани/напиши). "
-            "Обязательно добавь 10-15 тематических хэштегов (таро, эзотерика, энергия, и т.д.) в конце."
+            "Стиль: цепляющий, атмосферный. Структура: Заголовок -> Суть -> Призыв сохранить. "
+            "В самом конце добавь 10 тематических хэштегов."
         )
 
+    # ОСНОВНА ЗМІНА ТУТ: Дуже суворий ліміт символів
     prompt = (
         f"{role_desc} Напиши пост на языке: {TARGET_LANGUAGE}.\n"
         f"Тема: {topic}.\nКонтекст: {context}.\n"
         f"Требования: {requirements}\n"
-        f"Объем: До 950 символов. Добавь соответствующие эзотерические эмодзи (✨, 🔮, 🌙)."
+        f"СТРОГОЕ ОГРАНИЧЕНИЕ: Максимальная длина всего текста — 850 символов (включая пробелы). "
+        f"Это критически важно, иначе пост обрежется. Пиши лаконично."
     )
     
     try:
@@ -87,7 +87,7 @@ async def get_random_photo(keywords):
         logging.error(f"Unsplash Error: {e}")
     return "https://via.placeholder.com/800x600?text=No+Photo"
 
-# --- 3. Основна функція генерації ---
+# --- 3. Основна функція ---
 async def prepare_draft(platform, manual_day=None, from_command=False):
     day_now = manual_day if manual_day else datetime.datetime.now().day
     table_name = "telegram_posts" if platform == "tg" else "instagram_posts"
@@ -96,7 +96,6 @@ async def prepare_draft(platform, manual_day=None, from_command=False):
     try:
         conn = connect_to_db_with_retry()
         cursor = conn.cursor()
-        
         cursor.execute(f"SELECT topic, content, photo_keywords FROM {table_name} WHERE day_number = %s", (day_now,))
         result = cursor.fetchone()
         
@@ -111,9 +110,13 @@ async def prepare_draft(platform, manual_day=None, from_command=False):
             photo_url = await get_random_photo(keywords)
             full_post_text = await generate_ai_post(topic, short_context, platform)
             
-            # Заголовок повідомлення (UI російською)
+            # Формуємо заголовок
             caption = f"<b>📸 {platform_name.upper()} (День {day_now})</b>\n\n{full_post_text}"
-            if len(caption) > 1020: caption = caption[:1015] + "..."
+            
+            # ЗАПОБІЖНИК: Якщо текст все одно довгий, обрізаємо його програмно
+            # Ліміт Телеграму 1024, ми ріжемо на 1000, щоб точно влізло
+            if len(caption) > 1020:
+                caption = caption[:1015] + "..."
             
             builder = InlineKeyboardBuilder()
             
@@ -139,10 +142,10 @@ async def prepare_draft(platform, manual_day=None, from_command=False):
 async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         await message.answer(
-            "👋 <b>Магическая Панель</b>\n\n"
-            "/generate_tg — Создать пост для Telegram\n"
-            "/generate_inst — Создать пост для Instagram\n"
-            "/start — Обновить меню",
+            "👋 <b>Магическая Панель v2.0</b>\n"
+            "Лимиты текста обновлены.\n\n"
+            "/generate_tg — Пост для Telegram\n"
+            "/generate_inst — Пост для Instagram",
             parse_mode="HTML"
         )
 
@@ -174,6 +177,7 @@ async def regen_photo(callback: types.CallbackQuery):
 
         if result:
             new_photo_url = await get_random_photo(result[0])
+            # Зберігаємо старий підпис і форматування
             media = InputMediaPhoto(media=new_photo_url, caption=callback.message.caption, caption_entities=callback.message.caption_entities)
             await callback.message.edit_media(media=media, reply_markup=callback.message.reply_markup)
     except Exception as e:
@@ -198,6 +202,8 @@ async def regen_text(callback: types.CallbackQuery):
         if result:
             new_text = await generate_ai_post(result[0], result[1], platform)
             new_caption = f"<b>📸 {platform_name} (День {day})</b>\n\n{new_text}"
+            
+            # ТЕ САМЕ ОБМЕЖЕННЯ ПРИ РЕГЕНЕРАЦІЇ
             if len(new_caption) > 1020: new_caption = new_caption[:1015] + "..."
             
             await callback.message.edit_caption(caption=new_caption, parse_mode="HTML", reply_markup=callback.message.reply_markup)
@@ -218,10 +224,10 @@ async def publish_to_channel(callback: types.CallbackQuery):
         caption=clean_caption, 
         caption_entities=callback.message.caption_entities
     )
-    await callback.message.edit_caption(caption=f"✅ <b>ОПУБЛИКОВАНО В КАНАЛ</b>\n\n{clean_caption}", parse_mode="HTML")
+    await callback.message.edit_caption(caption=f"✅ <b>ОПУБЛИКОВАНО</b>\n\n{clean_caption}", parse_mode="HTML")
 
 # --- Сервер ---
-async def handle(request): return web.Response(text="Tarot Bot Running")
+async def handle(request): return web.Response(text="Bot Running")
 
 async def main():
     logging.basicConfig(level=logging.INFO)
@@ -237,7 +243,7 @@ async def main():
     scheduler.start()
     
     try:
-        await bot.send_message(ADMIN_ID, "🟢 Эзотерический бот запущен!")
+        await bot.send_message(ADMIN_ID, "🟢 Бот перезапущен с новыми лимитами!")
     except:
         pass
 
