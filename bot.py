@@ -50,7 +50,7 @@ async def generate_ai_post(topic, context, platform):
         role_desc = "Ты опытный таролог и энергопрактик, автор Telegram-канала."
         requirements = (
             "Стиль: мистический, но без 'воды', конкретный. "
-            "Используй <b>жирный шрифт</b> для важных мыслей. "
+            "ВАЖНО: Пиши обычным чистым текстом. Не используй никакого форматирования (ни , ни <b>)."
             "В конце задай 1 короткий вопрос аудитории."
         )
     else: # inst
@@ -128,7 +128,7 @@ async def prepare_draft(platform, manual_day=None, from_command=False):
                 types.InlineKeyboardButton(text="📝 Другой текст", callback_data=f"text_{platform}_{day_now}")
             )
             
-            await bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=caption, reply_markup=builder.as_markup(), parse_mode="HTML")
+            await bot.send_photo(chat_id=ADMIN_ID, photo=photo_url, caption=caption, reply_markup=builder.as_markup())
         else:
             await bot.send_message(ADMIN_ID, f"⚠️ В таблице {table_name} нет темы на день {day_now}!")
             
@@ -144,8 +144,7 @@ async def cmd_start(message: types.Message):
         await message.answer(
             "👋 <b>Магическая Панель v2.0</b>\n"
             "/generate_tg — Пост для Telegram\n"
-            "/generate_inst — Пост для Instagram",
-            parse_mode="HTML"
+            "/generate_inst — Пост для Instagram"
         )
 
 @dp.message(Command("generate_tg"))
@@ -177,7 +176,7 @@ async def regen_photo(callback: types.CallbackQuery):
         if result:
             new_photo_url = await get_random_photo(result[0])
             # Зберігаємо старий підпис і форматування
-            media = InputMediaPhoto(media=new_photo_url, caption=callback.message.caption, caption_entities=callback.message.caption_entities)
+            media = InputMediaPhoto(media=new_photo_url, caption=callback.message.caption)
             await callback.message.edit_media(media=media, reply_markup=callback.message.reply_markup)
     except Exception as e:
         await callback.message.answer(f"Ошибка: {e}")
@@ -205,7 +204,7 @@ async def regen_text(callback: types.CallbackQuery):
             # ТЕ САМЕ ОБМЕЖЕННЯ ПРИ РЕГЕНЕРАЦІЇ
             if len(new_caption) > 1020: new_caption = new_caption[:1015] + "..."
             
-            await callback.message.edit_caption(caption=new_caption, parse_mode="HTML", reply_markup=callback.message.reply_markup)
+            await callback.message.edit_caption(caption=new_caption, reply_markup=callback.message.reply_markup)
     except Exception as e:
         await callback.message.answer(f"Ошибка: {e}")
 
@@ -220,10 +219,9 @@ async def publish_to_channel(callback: types.CallbackQuery):
     await bot.send_photo(
         chat_id=CHANNEL_ID, 
         photo=callback.message.photo[-1].file_id, 
-        caption=clean_caption, 
-        caption_entities=callback.message.caption_entities
+        caption=clean_caption
     )
-    await callback.message.edit_caption(caption=f"✅ <b>ОПУБЛИКОВАНО</b>\n\n{clean_caption}", parse_mode="HTML")
+    await callback.message.edit_caption(caption=f"✅ <b>ОПУБЛИКОВАНО</b>\n\n{clean_caption}")
 
 # --- Сервер ---
 async def handle(request): return web.Response(text="Bot Running")
