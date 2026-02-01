@@ -5,6 +5,7 @@ import datetime
 import time
 import requests
 import psycopg2
+import re
 import google.generativeai as genai
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -21,20 +22,23 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 UNSPLASH_KEY = os.environ.get("UNSPLASH_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Налаштування AI
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-flash-latest')
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Мова генерації (зміни на "ukrainian", якщо захочеш)
+# Мова генерації
 TARGET_LANGUAGE = "russian" 
+
+# --- ПІДПИС ДЛЯ ПОМИЛОК ---
+ERROR_SIGNATURE = "\n\n📩 <b>Перешлите это сообщение программисту Нате, она знает что с этим делать и поможет вам исправить ошибку.</b>"
 
 # --- Допоміжні функції ---
 def clean_text(text):
-    # Прибираємо Markdown сміття, яке може псувати HTML
-    return text.replace("**", "").replace("### ", "").replace("## ", "")
+    text = text.replace("**", "").replace("### ", "").replace("## ", "")
+    clean = re.compile('<.*?>')
+    return re.sub(clean, '', text).strip()
 
 def connect_to_db_with_retry():
     for i in range(3):
@@ -44,29 +48,20 @@ def connect_to_db_with_retry():
             time.sleep(5)
             if i == 2: raise e
 
-# --- 1. Логіка AI (З ЖОРСТКИМИ ЛІМІТАМИ) ---
+# --- 1. Логіка AI ---
 async def generate_ai_post(topic, context, platform):
     if platform == "tg":
-        role_desc = "Ты опытный таролог и энергопрактик, автор Telegram-канала."
-        requirements = (
-            "Стиль: мистический, но без 'воды', конкретный. "
-            "ВАЖНО: Пиши обычным чистым текстом. Не используй никакого форматирования (ни , ни <b>)."
-            "В конце задай 1 короткий вопрос аудитории."
-        )
-    else: # inst
+        role_desc = "Ты опытный таролог и энергопрактик."
+        requirements = "Стиль: мистический, но без 'воды'. Пиши обычным текстом без форматирования."
+    else: 
         role_desc = "Ты популярный эзотерик-блогер."
-        requirements = (
-            "Стиль: цепляющий, атмосферный. Структура: Заголовок -> Суть -> Призыв сохранить. "
-            "В самом конце добавь 10 тематических хэштегов."
-        )
+        requirements = "Стиль: цепляющий. Добавь хэштеги. Пиши обычным текстом без форматирования."
 
-    # ОСНОВНА ЗМІНА ТУТ: Дуже суворий ліміт символів
     prompt = (
         f"{role_desc} Напиши пост на языке: {TARGET_LANGUAGE}.\n"
         f"Тема: {topic}.\nКонтекст: {context}.\n"
         f"Требования: {requirements}\n"
-        f"СТРОГОЕ ОГРАНИЧЕНИЕ: Максимальная длина всего текста — 850 символов (включая пробелы). "
-        f"Это критически важно, иначе пост обрежется. Пиши лаконично."
+        f"ВАЖНО: Максимальная длина — 850 символов. Не используй жирный шрифт."
     )
     
     try:
@@ -75,7 +70,7 @@ async def generate_ai_post(topic, context, platform):
     except Exception as e:
         return f"ERROR_AI: {str(e)}"
 
-# --- 2. Пошук фото ---
+# --- 2. Пошук фото (ВИПРАВЛЕНО) ---
 async def get_random_photo(keywords):
     url = f"https://api.unsplash.com/photos/random?query={keywords}&client_id={UNSPLASH_KEY}&orientation=landscape&count=1&t={int(time.time())}"
     try:
@@ -83,9 +78,14 @@ async def get_random_photo(keywords):
         if response.status_code == 200:
             data = response.json()
             return data[0]['urls']['regular'] if isinstance(data, list) else data['urls']['regular']
+        else:
+            logging.error(f"Unsplash Error Status: {response.status_code}")
     except Exception as e:
         logging.error(f"Unsplash Error: {e}")
-    return "https://via.placeholder.com/800x600?text=No+Photo"
+    
+    # ЗАМІНИЛИ ненадійний placeholder на статичне гарне фото (щоб не було помилки wrong type)
+    # Це фото "зоряного неба", воно підходить під тему магії як заглушка
+    return "https://images.unsplash.com/photo-1534447677768-be436bb09401?q=80&w=1000&auto=format&fit=crop"
 
 # --- 3. Основна функція ---
 async def prepare_draft(platform, manual_day=None, from_command=False):
@@ -110,16 +110,11 @@ async def prepare_draft(platform, manual_day=None, from_command=False):
             photo_url = await get_random_photo(keywords)
             full_post_text = await generate_ai_post(topic, short_context, platform)
             
-            # Формуємо заголовок
-            caption = f"<b>📸 {platform_name.upper()} (День {day_now})</b>\n\n{full_post_text}"
+            caption = f"📸 {platform_name.upper()} (День {day_now})\n\n{full_post_text}"
             
-            # ЗАПОБІЖНИК: Якщо текст все одно довгий, обрізаємо його програмно
-            # Ліміт Телеграму 1024, ми ріжемо на 1000, щоб точно влізло
-            if len(caption) > 1020:
-                caption = caption[:1015] + "..."
+            if len(caption) > 1020: caption = caption[:1015] + "..."
             
             builder = InlineKeyboardBuilder()
-            
             if platform == "tg":
                 builder.row(types.InlineKeyboardButton(text="✅ Опубликовать", callback_data="confirm_publish"))
             
@@ -135,17 +130,14 @@ async def prepare_draft(platform, manual_day=None, from_command=False):
         cursor.close()
         conn.close()
     except Exception as e:
-        await bot.send_message(ADMIN_ID, f"🆘 Ошибка ({platform}): {e}")
+        # ОСЬ ТУТ ДОДАЛИ ТВОЮ ФРАЗУ ПРО НАТУ
+        await bot.send_message(ADMIN_ID, f"🆘 Ошибка ({platform}): {e}{ERROR_SIGNATURE}", parse_mode="HTML")
 
 # --- Обробка команд ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
-        await message.answer(
-            "👋 <b>Магическая Панель v2.0</b>\n"
-            "/generate_tg — Пост для Telegram\n"
-            "/generate_inst — Пост для Instagram"
-        )
+        await message.answer("👋 Magic Bot Ready\n/generate_tg\n/generate_inst")
 
 @dp.message(Command("generate_tg"))
 async def cmd_gen_tg(message: types.Message):
@@ -175,7 +167,6 @@ async def regen_photo(callback: types.CallbackQuery):
 
         if result:
             new_photo_url = await get_random_photo(result[0])
-            # Зберігаємо старий підпис і форматування
             media = InputMediaPhoto(media=new_photo_url, caption=callback.message.caption)
             await callback.message.edit_media(media=media, reply_markup=callback.message.reply_markup)
     except Exception as e:
@@ -199,9 +190,7 @@ async def regen_text(callback: types.CallbackQuery):
 
         if result:
             new_text = await generate_ai_post(result[0], result[1], platform)
-            new_caption = f"<b>📸 {platform_name} (День {day})</b>\n\n{new_text}"
-            
-            # ТЕ САМЕ ОБМЕЖЕННЯ ПРИ РЕГЕНЕРАЦІЇ
+            new_caption = f"📸 {platform_name} (День {day})\n\n{new_text}"
             if len(new_caption) > 1020: new_caption = new_caption[:1015] + "..."
             
             await callback.message.edit_caption(caption=new_caption, reply_markup=callback.message.reply_markup)
@@ -210,21 +199,17 @@ async def regen_text(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "confirm_publish")
 async def publish_to_channel(callback: types.CallbackQuery):
-    caption = callback.message.html_text if callback.message.html_text else callback.message.caption
+    caption = callback.message.caption
     clean_caption = caption
     if "TELEGRAM" in caption:
          parts = caption.split("\n\n", 1)
          if len(parts) > 1: clean_caption = parts[1]
     
-    await bot.send_photo(
-        chat_id=CHANNEL_ID, 
-        photo=callback.message.photo[-1].file_id, 
-        caption=clean_caption
-    )
-    await callback.message.edit_caption(caption=f"✅ <b>ОПУБЛИКОВАНО</b>\n\n{clean_caption}")
+    await bot.send_photo(chat_id=CHANNEL_ID, photo=callback.message.photo[-1].file_id, caption=clean_caption)
+    await callback.message.edit_caption(caption=f"✅ <b>ОПУБЛИКОВАНО</b>\n\n{clean_caption}", parse_mode="HTML")
 
 # --- Сервер ---
-async def handle(request): return web.Response(text="Bot Running")
+async def handle(request): return web.Response(text="Magic Bot Running")
 
 async def main():
     logging.basicConfig(level=logging.INFO)
@@ -240,7 +225,7 @@ async def main():
     scheduler.start()
     
     try:
-        await bot.send_message(ADMIN_ID, "✨ Портал связи с Вселенной успешно открыт. Энергетические потоки стабилизированы. Я готов принимать сигналы.")
+        await bot.send_message(ADMIN_ID, "✨ Портал связи открыт! 🔮")
     except:
         pass
 
