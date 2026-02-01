@@ -70,22 +70,38 @@ async def generate_ai_post(topic, context, platform):
     except Exception as e:
         return f"ERROR_AI: {str(e)}"
 
-# --- 2. Пошук фото (ВИПРАВЛЕНО) ---
+# --- 2. Пошук фото ---
 async def get_random_photo(keywords):
+    # Рівень 1: Шукаємо те, що в базі
     url = f"https://api.unsplash.com/photos/random?query={keywords}&client_id={UNSPLASH_KEY}&orientation=landscape&count=1&t={int(time.time())}"
     try:
         response = requests.get(url, timeout=10)
+        
+        # Якщо знайшли фото
         if response.status_code == 200:
             data = response.json()
-            return data[0]['urls']['regular'] if isinstance(data, list) else data['urls']['regular']
-        else:
-            logging.error(f"Unsplash Error Status: {response.status_code}")
+            if isinstance(data, list) and len(data) > 0:
+                return data[0]['urls']['regular']
+            elif isinstance(data, dict) and 'urls' in data:
+                return data['urls']['regular']
+        
+        # Якщо 404 (Не знайшов) -> Рівень 2: Шукаємо загальну магію
+        elif response.status_code == 404:
+            backup_url = f"https://api.unsplash.com/photos/random?query=tarot+magic+candles&client_id={UNSPLASH_KEY}&orientation=landscape&count=1&t={int(time.time())}"
+            backup_response = requests.get(backup_url, timeout=10)
+            if backup_response.status_code == 200:
+                data = backup_response.json()
+                if isinstance(data, list) and len(data) > 0:
+                    return data[0]['urls']['regular']
+                elif isinstance(data, dict) and 'urls' in data:
+                    return data['urls']['regular']
+
     except Exception as e:
         logging.error(f"Unsplash Error: {e}")
     
-    # ЗАМІНИЛИ ненадійний placeholder на статичне гарне фото (щоб не було помилки wrong type)
-    # Це фото "зоряного неба", воно підходить під тему магії як заглушка
-    return "https://images.unsplash.com/photo-1534447677768-be436bb09401?q=80&w=1000&auto=format&fit=crop"
+    # Рівень 3: Якщо все пропало - ставимо НОВЕ ЗАПАСНЕ ФОТО (Таро і свічки)
+    # Пряме посилання, без змінних, щоб не було жовтих ліній
+    return "https://images.unsplash.com/photo-1603522370258-067c2162b775?q=80&w=1000&auto=format&fit=crop"
 
 # --- 3. Основна функція ---
 async def prepare_draft(platform, manual_day=None, from_command=False):
@@ -220,7 +236,7 @@ async def main():
     await web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 10000))).start()
     
     scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
-    scheduler.add_job(prepare_draft, 'cron', hour=14, minute=25, args=['tg'], misfire_grace_time=3600)
+    scheduler.add_job(prepare_draft, 'cron', hour=9, minute=0, args=['tg'], misfire_grace_time=3600)
     scheduler.add_job(prepare_draft, 'cron', hour=9, minute=10, args=['inst'], misfire_grace_time=3600)
     scheduler.start()
     
