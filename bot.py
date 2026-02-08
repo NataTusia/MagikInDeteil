@@ -260,7 +260,7 @@ async def main():
     
     scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
     scheduler.add_job(prepare_draft, 'cron', hour=9, minute=0, args=['tg'], misfire_grace_time=3600)
-    scheduler.add_job(prepare_draft, 'cron', hour=9, minute=10, args=['inst'], misfire_grace_time=3600)
+    scheduler.add_job(prepare_draft, 'cron', hour=9, minute=5, args=['inst'], misfire_grace_time=3600)
     scheduler.start()
     
     try:
@@ -271,4 +271,5 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+
     asyncio.run(main())
